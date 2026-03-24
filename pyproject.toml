@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "shalosh"
 version = "0.1.0"
 description = "Three-valued rule evaluation and provenance tracking"
-authors = [{ name = "Maul Bogat" }]
+authors = [{ name = "Roy Maulbogat", email = "maulbogat@gmail.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = []
