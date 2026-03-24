@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python engine.py)",
+      "Bash(python3 engine.py)",
+      "Bash(python3 -m pytest test_engine.py -v)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/pytest test_engine.py -v)"
+    ]
+  }
+}
