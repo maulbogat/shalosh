@@ -1,5 +1,5 @@
 import pytest
-from engine import evaluate, provenance, leaf, and_, or_, not_
+from shalosh.engine import evaluate, provenance, leaf, and_, or_, not_
 
 
 def ev(rule, data):
