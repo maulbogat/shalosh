@@ -50,6 +50,11 @@ print(evaluate(rule, partial))   # False  — already determined, no need for mo
 print(provenance(rule, partial)) # ["good_credit_history"]
 ```
 
+## Installation
+```bash
+pip install shalosh
+```
+
 ## Why this matters
 
 **Early exit on cheap features** — evaluate rules on inexpensive
@@ -68,12 +73,7 @@ portions of your traffic signal missing data pipelines.
 
 ## Demo
 
-See `demo.ipynb` for a worked example on the German Credit dataset
-(1,000 applicants, 20 features). Key result: dropping a single
-feature (`age`) leaves `premium_approval` and `auto_reject` completely
-unaffected — they don't reference age — while `safe_profile` loses
-441 resolved decisions to `unknown`. Provenance tracking identifies
-`age_ge_25` as the blocking condition in every affected case.
+See `demo.ipynb` for a worked example on the German Credit dataset (1,000 applicants, 20 features). Key result: dropping a single feature (`age`) leaves `premium_approval` and `auto_reject` completely unaffected — they don't reference age — while `safe_profile` loses 441 resolved decisions to `unknown`. Of those 441, 396 were previously approved and 45 were previously rejected. Provenance tracking identifies `age_ge_25` as the blocking condition in every affected case.
 
 ## How it works
 
