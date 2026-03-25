@@ -26,6 +26,11 @@ and understanding your data.
 leaf conditions that determined the outcome. Not a statistical
 approximation — a structural, exact answer.
 
+## Installation
+```bash
+pip install shalosh
+```
+
 ## Quick start
 ```python
 from shalosh.engine import leaf, and_, or_, not_, evaluate, provenance
@@ -50,11 +55,6 @@ print(evaluate(rule, partial))   # False  — already determined, no need for mo
 print(provenance(rule, partial)) # ["good_credit_history"]
 ```
 
-## Installation
-```bash
-pip install shalosh
-```
-
 ## Why this matters
 
 **Early exit on cheap features** — evaluate rules on inexpensive
@@ -71,6 +71,12 @@ the feature is fully available.
 **Data quality monitoring** — rules that return `unknown` for large
 portions of your traffic signal missing data pipelines.
 
+**Two-phase evaluation** — evaluate cheap "config" features first
+to determine rule relevance, then fetch expensive "logic" features
+only for relevant rules. Shalosh returns `False` early if config
+features already rule it out, and `"unknown"` if the decision
+depends on features not yet fetched.
+
 ## Demo
 
 See `demo.ipynb` for a worked example on the German Credit dataset (1,000 applicants, 20 features). Key result: dropping a single feature (`age`) leaves `premium_approval` and `auto_reject` completely unaffected — they don't reference age — while `safe_profile` loses 441 resolved decisions to `unknown`. Of those 441, 396 were previously approved and 45 were previously rejected. Provenance tracking identifies `age_ge_25` as the blocking condition in every affected case.
@@ -81,6 +87,14 @@ Rules are AND/OR/NOT trees over boolean leaf conditions. Evaluation
 follows **Strong Kleene three-valued logic**: `unknown` propagates
 through a tree unless the known values already determine the outcome
 (a single `False` in an AND, a single `True` in an OR).
+
+The naive approach to checking whether a rule could match given partial
+data requires checking all possible assignments for missing features —
+exponential in the worst case. Shalosh instead answers a more tractable
+question: do the known features already determine the outcome? This
+reduces to a single O(n) tree traversal. For minimal rules, `"unknown"`
+precisely means "both outcomes are still possible." For non-minimal rules
+containing contradictions or tautologies, this guarantee does not hold.
 
 Provenance tracking recurses through the same tree and collects only
 the leaves that were load-bearing for the result.
@@ -94,6 +108,8 @@ Both algorithms are O(n) in the number of conditions.
       would resolve the most unknowns
 - [ ] Adapter for Drools / easy-rules
 - [ ] Evaluation reordering optimizer
+- [ ] Provenance deduplication — merge conditions on the same feature across branches (e.g. `a>1, a<3` → `1<a<3`)
+- [ ] Lazy evaluation mode — short-circuit child evaluation to match behaviour of lazy rule engines
 
 ## License
 

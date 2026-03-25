@@ -38,7 +38,13 @@ def _is_unknown(v: TV) -> bool:
 # ---------------------------------------------------------------------------
 
 def evaluate(rule: Rule, data: dict) -> TV:
-    """Return True, False, or "unknown" using Strong Kleene logic."""
+    """Return True, False, or "unknown" using Strong Kleene logic.
+
+    "unknown" correctly means "outcome depends on missing features"
+    only for minimal rules — rules containing no contradictions or
+    tautologies in any sub-tree. For non-minimal rules, "unknown" may
+    be returned in cases that are actually always True or always False.
+    """
     if rule.op == "LEAF":
         return data.get(rule.condition, "unknown")
 
