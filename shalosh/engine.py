@@ -5,6 +5,26 @@ from typing import Union
 # Three-valued type: True, False, or "unknown"
 TV = Union[bool, str]
 
+# ---------------------------------------------------------------------------
+# Module-level evaluation mode.
+#
+# Two-level config pattern:
+#   1. Global default — set ``default_lazy`` to change the library-wide
+#      behaviour without touching call sites.
+#   2. Per-call override — pass ``lazy=True/False`` to ``evaluate()`` or
+#      ``provenance()`` to override the global default for that one call.
+#
+# Eager (lazy=False, the default) evaluates every child before deciding,
+# giving *complete* provenance — all load-bearing leaves are returned even
+# when a short-circuit would have sufficed. This is what downstream rule-
+# minimisation needs.
+#
+# Lazy (lazy=True) evaluates children left-to-right and stops as soon as
+# the outcome is determined, giving *sufficient* provenance — only the
+# leaves actually inspected before the decision was made.
+# ---------------------------------------------------------------------------
+default_lazy: bool = False
+
 
 @dataclass
 class Rule:
@@ -34,52 +54,114 @@ def _is_unknown(v: TV) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# evaluate
+# Core: single-pass eval + provenance
 # ---------------------------------------------------------------------------
 
-def evaluate(rule: Rule, data: dict) -> TV:
+def _eval(rule: Rule, data: dict, lazy: bool) -> tuple[TV, list[str]]:
+    """Evaluate *rule* against *data* and return ``(value, provenance_leaves)``.
+
+    A single recursive traversal: no node is evaluated more than once.
+    """
+    if rule.op == "LEAF":
+        val = data.get(rule.condition, "unknown")
+        return (val, [rule.condition])
+
+    if rule.op == "NOT":
+        val, prov = _eval(rule.children[0], data, lazy)
+        if _is_unknown(val):
+            return ("unknown", prov)
+        return (not val, prov)
+
+    if rule.op == "AND":
+        if lazy:
+            # Left-to-right; return False immediately on the first False child.
+            # Unknown children are noted but do not stop evaluation — a later
+            # False still wins.
+            true_prov: list[str] = []
+            unknown_prov: list[str] = []
+            for child in rule.children:
+                val, prov = _eval(child, data, lazy)
+                if _is_false(val):
+                    return (False, prov)
+                elif _is_unknown(val):
+                    unknown_prov.extend(prov)
+                else:
+                    true_prov.extend(prov)
+            # No False found
+            if unknown_prov:
+                return ("unknown", unknown_prov)
+            return (True, true_prov)
+        else:
+            # Eager: evaluate all children before deciding.
+            results = [_eval(c, data, lazy) for c in rule.children]
+            vals = [v for v, _ in results]
+            if any(_is_false(v) for v in vals):
+                return (False, [leaf for v, prov in results
+                                if _is_false(v) for leaf in prov])
+            if any(_is_unknown(v) for v in vals):
+                return ("unknown", [leaf for v, prov in results
+                                    if _is_unknown(v) for leaf in prov])
+            return (True, [leaf for _, prov in results for leaf in prov])
+
+    if rule.op == "OR":
+        if lazy:
+            # Left-to-right; return True immediately on the first True child.
+            false_prov: list[str] = []
+            unknown_prov: list[str] = []
+            for child in rule.children:
+                val, prov = _eval(child, data, lazy)
+                if _is_true(val):
+                    return (True, prov)
+                elif _is_unknown(val):
+                    unknown_prov.extend(prov)
+                else:
+                    false_prov.extend(prov)
+            # No True found
+            if unknown_prov:
+                return ("unknown", unknown_prov)
+            return (False, false_prov)
+        else:
+            # Eager: evaluate all children before deciding.
+            results = [_eval(c, data, lazy) for c in rule.children]
+            vals = [v for v, _ in results]
+            if any(_is_true(v) for v in vals):
+                return (True, [leaf for v, prov in results
+                               if _is_true(v) for leaf in prov])
+            if any(_is_unknown(v) for v in vals):
+                return ("unknown", [leaf for v, prov in results
+                                    if _is_unknown(v) for leaf in prov])
+            return (False, [leaf for _, prov in results for leaf in prov])
+
+    raise ValueError(f"Unrecognised op: {rule.op!r}")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def evaluate(rule: Rule, data: dict, *, lazy: bool | None = None) -> TV:
     """Return True, False, or "unknown" using Strong Kleene logic.
 
     "unknown" correctly means "outcome depends on missing features"
     only for minimal rules — rules containing no contradictions or
     tautologies in any sub-tree. For non-minimal rules, "unknown" may
     be returned in cases that are actually always True or always False.
+
+    lazy: if True, use lazy (left-to-right short-circuit) evaluation;
+          if False, use eager (evaluate all children) evaluation;
+          if None (default), use the module-level ``default_lazy`` setting.
+
+    Eager mode gives *complete* provenance — all load-bearing leaves are
+    included even when a short-circuit would have sufficed. Lazy mode
+    gives *sufficient* provenance — only the leaves actually inspected
+    left-to-right before the decision was made.
     """
-    if rule.op == "LEAF":
-        return data.get(rule.condition, "unknown")
-
-    if rule.op == "NOT":
-        child = evaluate(rule.children[0], data)
-        if _is_unknown(child):
-            return "unknown"
-        return not child
-
-    vals = [evaluate(c, data) for c in rule.children]
-
-    if rule.op == "AND":
-        # A single False short-circuits regardless of unknowns
-        if any(_is_false(v) for v in vals):
-            return False
-        if any(_is_unknown(v) for v in vals):
-            return "unknown"
-        return True
-
-    if rule.op == "OR":
-        # A single True short-circuits regardless of unknowns
-        if any(_is_true(v) for v in vals):
-            return True
-        if any(_is_unknown(v) for v in vals):
-            return "unknown"
-        return False
-
-    raise ValueError(f"Unrecognised op: {rule.op!r}")
+    use_lazy = default_lazy if lazy is None else lazy
+    val, _ = _eval(rule, data, use_lazy)
+    return val
 
 
-# ---------------------------------------------------------------------------
-# provenance
-# ---------------------------------------------------------------------------
-
-def provenance(rule: Rule, data: dict) -> list[str]:
+def provenance(rule: Rule, data: dict, *, lazy: bool | None = None) -> list[str]:
     """Return the leaf condition strings that actually determined the outcome.
 
     For a definite result (True/False):
@@ -90,42 +172,19 @@ def provenance(rule: Rule, data: dict) -> list[str]:
       NOT        → same leaves as its child
 
     For "unknown": the unknown leaves that prevented determination.
+
+    lazy: if True, use lazy (left-to-right short-circuit) evaluation;
+          if False, use eager (evaluate all children) evaluation;
+          if None (default), use the module-level ``default_lazy`` setting.
+
+    Eager mode gives *complete* provenance — all load-bearing leaves are
+    included even when a short-circuit would have sufficed. Lazy mode
+    gives *sufficient* provenance — only the leaves actually inspected
+    left-to-right before the decision was made.
     """
-    return _prov(rule, data)
-
-
-def _prov(rule: Rule, data: dict) -> list[str]:
-    if rule.op == "LEAF":
-        return [rule.condition]
-
-    if rule.op == "NOT":
-        return _prov(rule.children[0], data)
-
-    vals = [evaluate(c, data) for c in rule.children]
-    outcome = evaluate(rule, data)
-
-    if rule.op == "AND":
-        if _is_false(outcome):
-            # Only the False subtrees mattered
-            return [leaf for c, v in zip(rule.children, vals)
-                    if _is_false(v) for leaf in _prov(c, data)]
-        if _is_true(outcome):
-            # Every child was required
-            return [leaf for c in rule.children for leaf in _prov(c, data)]
-        # unknown: the unknown children blocked resolution
-        return [leaf for c, v in zip(rule.children, vals)
-                if _is_unknown(v) for leaf in _prov(c, data)]
-
-    if rule.op == "OR":
-        if _is_true(outcome):
-            return [leaf for c, v in zip(rule.children, vals)
-                    if _is_true(v) for leaf in _prov(c, data)]
-        if _is_false(outcome):
-            return [leaf for c in rule.children for leaf in _prov(c, data)]
-        return [leaf for c, v in zip(rule.children, vals)
-                if _is_unknown(v) for leaf in _prov(c, data)]
-
-    raise ValueError(f"Unrecognised op: {rule.op!r}")
+    use_lazy = default_lazy if lazy is None else lazy
+    _, prov = _eval(rule, data, use_lazy)
+    return prov
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +220,7 @@ if __name__ == "__main__":
             print(f"       prov:  expected={sorted(expected_prov)}  got={sorted(got[1])}")
 
     def run(rule, data):
-        return evaluate(rule, data), provenance(rule, data)
+        return _eval(rule, data, False)
 
     # 1. Simple LEAF hit
     r = leaf("sunny")
